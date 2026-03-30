@@ -18,6 +18,7 @@ import {
 const mainItems = [
   { title: 'Dashboard', url: '/', icon: LayoutDashboard },
   { title: 'Query Analyzer', url: '/analyzer', icon: Search },
+  { title: 'Live Query', url: '/live-query', icon: Terminal },
   { title: 'Results', url: '/results', icon: BarChart3 },
   { title: 'History', url: '/history', icon: History },
 ];
