@@ -105,6 +105,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               name: getAttributeValue(attrs, 'name'),
               email: getAttributeValue(attrs, 'email'),
             });
+            fetchAwsIdentity(session);
             resolve();
           });
         },
