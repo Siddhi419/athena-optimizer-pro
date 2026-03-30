@@ -7,6 +7,7 @@ import {
   CognitoUserSession,
 } from 'amazon-cognito-identity-js';
 import { COGNITO_CONFIG } from '@/lib/cognitoConfig';
+import { getAwsIdentity, AwsIdentityInfo } from '@/lib/awsIdentity';
 
 const userPool = new CognitoUserPool({
   UserPoolId: COGNITO_CONFIG.UserPoolId,
@@ -22,6 +23,8 @@ interface User {
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
+  awsIdentity: AwsIdentityInfo | null;
+  awsIdentityLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
   signup: (name: string, email: string, password: string) => Promise<void>;
   confirmSignup: (email: string, code: string) => Promise<void>;
@@ -39,8 +42,23 @@ function getAttributeValue(attrs: CognitoUserAttribute[], name: string): string 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [awsIdentity, setAwsIdentity] = useState<AwsIdentityInfo | null>(null);
+  const [awsIdentityLoading, setAwsIdentityLoading] = useState(false);
   const [needsConfirmation, setNeedsConfirmation] = useState(false);
   const [confirmationEmail, setConfirmationEmail] = useState('');
+
+  const fetchAwsIdentity = async (session: CognitoUserSession) => {
+    setAwsIdentityLoading(true);
+    try {
+      const idToken = session.getIdToken().getJwtToken();
+      const identity = await getAwsIdentity(idToken);
+      setAwsIdentity(identity);
+    } catch (e) {
+      console.warn('Could not fetch AWS identity:', e);
+    } finally {
+      setAwsIdentityLoading(false);
+    }
+  };
 
   // Check for existing session on mount
   useEffect(() => {
@@ -61,6 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             name: getAttributeValue(attrs, 'name'),
             email: getAttributeValue(attrs, 'email'),
           });
+          fetchAwsIdentity(session);
           setIsLoading(false);
         });
       });
@@ -75,7 +94,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const authDetails = new AuthenticationDetails({ Username: email, Password: password });
 
       cognitoUser.authenticateUser(authDetails, {
-        onSuccess: () => {
+        onSuccess: (session) => {
           cognitoUser.getUserAttributes((err, attrs) => {
             if (err || !attrs) {
               reject(new Error('Failed to get user attributes'));
@@ -86,6 +105,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               name: getAttributeValue(attrs, 'name'),
               email: getAttributeValue(attrs, 'email'),
             });
+            fetchAwsIdentity(session);
             resolve();
           });
         },
@@ -140,10 +160,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const cognitoUser = userPool.getCurrentUser();
     if (cognitoUser) cognitoUser.signOut();
     setUser(null);
+    setAwsIdentity(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, signup, confirmSignup, logout, needsConfirmation, confirmationEmail }}>
+    <AuthContext.Provider value={{ user, isLoading, awsIdentity, awsIdentityLoading, login, signup, confirmSignup, logout, needsConfirmation, confirmationEmail }}>
       {children}
     </AuthContext.Provider>
   );
