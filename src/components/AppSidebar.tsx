@@ -1,4 +1,4 @@
-import { Database, LayoutDashboard, Search, History, User, BarChart3, LogOut } from 'lucide-react';
+import { Database, LayoutDashboard, Search, History, User, BarChart3, LogOut, Terminal } from 'lucide-react';
 import { NavLink } from '@/components/NavLink';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
@@ -18,6 +18,7 @@ import {
 const mainItems = [
   { title: 'Dashboard', url: '/', icon: LayoutDashboard },
   { title: 'Query Analyzer', url: '/analyzer', icon: Search },
+  { title: 'Live Query', url: '/live-query', icon: Terminal },
   { title: 'Results', url: '/results', icon: BarChart3 },
   { title: 'History', url: '/history', icon: History },
 ];

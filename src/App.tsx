@@ -13,6 +13,7 @@ import Analyzer from "./pages/Analyzer";
 import Results from "./pages/Results";
 import HistoryPage from "./pages/HistoryPage";
 import Profile from "./pages/Profile";
+import LiveQuery from "./pages/LiveQuery";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -42,6 +43,7 @@ const AppRoutes = () => (
     <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
       <Route path="/" element={<Dashboard />} />
       <Route path="/analyzer" element={<Analyzer />} />
+      <Route path="/live-query" element={<LiveQuery />} />
       <Route path="/results" element={<Results />} />
       <Route path="/history" element={<HistoryPage />} />
       <Route path="/profile" element={<Profile />} />
