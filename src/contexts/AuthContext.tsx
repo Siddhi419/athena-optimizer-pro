@@ -7,6 +7,7 @@ import {
   CognitoUserSession,
 } from 'amazon-cognito-identity-js';
 import { COGNITO_CONFIG } from '@/lib/cognitoConfig';
+import { getAwsIdentity, AwsIdentityInfo } from '@/lib/awsIdentity';
 
 const userPool = new CognitoUserPool({
   UserPoolId: COGNITO_CONFIG.UserPoolId,
@@ -22,6 +23,8 @@ interface User {
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
+  awsIdentity: AwsIdentityInfo | null;
+  awsIdentityLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
   signup: (name: string, email: string, password: string) => Promise<void>;
   confirmSignup: (email: string, code: string) => Promise<void>;
