@@ -94,7 +94,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const authDetails = new AuthenticationDetails({ Username: email, Password: password });
 
       cognitoUser.authenticateUser(authDetails, {
-        onSuccess: () => {
+        onSuccess: (session) => {
           cognitoUser.getUserAttributes((err, attrs) => {
             if (err || !attrs) {
               reject(new Error('Failed to get user attributes'));
