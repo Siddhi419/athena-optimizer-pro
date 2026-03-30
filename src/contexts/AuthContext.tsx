@@ -47,6 +47,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [needsConfirmation, setNeedsConfirmation] = useState(false);
   const [confirmationEmail, setConfirmationEmail] = useState('');
 
+  const fetchAwsIdentity = async (session: CognitoUserSession) => {
+    setAwsIdentityLoading(true);
+    try {
+      const idToken = session.getIdToken().getJwtToken();
+      const identity = await getAwsIdentity(idToken);
+      setAwsIdentity(identity);
+    } catch (e) {
+      console.warn('Could not fetch AWS identity:', e);
+    } finally {
+      setAwsIdentityLoading(false);
+    }
+  };
+
   // Check for existing session on mount
   useEffect(() => {
     const cognitoUser = userPool.getCurrentUser();
@@ -66,6 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             name: getAttributeValue(attrs, 'name'),
             email: getAttributeValue(attrs, 'email'),
           });
+          fetchAwsIdentity(session);
           setIsLoading(false);
         });
       });
