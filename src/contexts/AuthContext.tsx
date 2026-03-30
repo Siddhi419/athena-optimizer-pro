@@ -160,10 +160,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const cognitoUser = userPool.getCurrentUser();
     if (cognitoUser) cognitoUser.signOut();
     setUser(null);
+    setAwsIdentity(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, signup, confirmSignup, logout, needsConfirmation, confirmationEmail }}>
+    <AuthContext.Provider value={{ user, isLoading, awsIdentity, awsIdentityLoading, login, signup, confirmSignup, logout, needsConfirmation, confirmationEmail }}>
       {children}
     </AuthContext.Provider>
   );
