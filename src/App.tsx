@@ -13,6 +13,7 @@ import Analyzer from "./pages/Analyzer";
 import Results from "./pages/Results";
 import HistoryPage from "./pages/HistoryPage";
 import Profile from "./pages/Profile";
+import LiveQuery from "./pages/LiveQuery";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
