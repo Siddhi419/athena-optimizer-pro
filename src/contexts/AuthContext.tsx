@@ -42,6 +42,8 @@ function getAttributeValue(attrs: CognitoUserAttribute[], name: string): string 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [awsIdentity, setAwsIdentity] = useState<AwsIdentityInfo | null>(null);
+  const [awsIdentityLoading, setAwsIdentityLoading] = useState(false);
   const [needsConfirmation, setNeedsConfirmation] = useState(false);
   const [confirmationEmail, setConfirmationEmail] = useState('');
 
