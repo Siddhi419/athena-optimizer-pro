@@ -3,16 +3,33 @@ import { analyzeQuery, AnalysisResult } from '@/lib/queryAnalyzer';
 import SqlEditor from '@/components/SqlEditor';
 import SuggestionsPanel from '@/components/SuggestionsPanel';
 import ComparisonDashboard from '@/components/ComparisonDashboard';
+import QueryHistory, { HistoryEntry } from '@/components/QueryHistory';
 import { Database, Zap } from 'lucide-react';
 
 const Index = () => {
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
 
   const handleAnalyze = () => {
     if (!query.trim()) return;
     const analysis = analyzeQuery(query);
     setResult(analysis);
+
+    // Add to history (avoid duplicates of the exact same query)
+    setHistory((prev) => {
+      const exists = prev.some((e) => e.query === query.trim());
+      if (exists) return prev;
+      return [
+        { id: crypto.randomUUID(), query: query.trim(), result: analysis, timestamp: new Date() },
+        ...prev,
+      ].slice(0, 20); // keep last 20
+    });
+  };
+
+  const handleSelectHistory = (entry: HistoryEntry) => {
+    setQuery(entry.query);
+    setResult(entry.result);
   };
 
   return (
@@ -61,8 +78,15 @@ const Index = () => {
           </div>
         )}
 
+        {/* Query History */}
+        <QueryHistory
+          entries={history}
+          onSelect={handleSelectHistory}
+          onClear={() => setHistory([])}
+        />
+
         {/* Empty State */}
-        {!result && (
+        {!result && history.length === 0 && (
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-20 text-center">
             <Database className="mb-4 h-12 w-12 text-muted-foreground/30" />
             <p className="text-lg font-medium text-muted-foreground">
