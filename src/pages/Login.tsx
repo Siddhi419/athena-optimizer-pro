@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { Database, Mail, Lock, Eye, EyeOff } from 'lucide-react';
+import { Database, Mail, Lock, Eye, EyeOff, KeyRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,13 +10,14 @@ import { useToast } from '@/hooks/use-toast';
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmCode, setConfirmCode] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
+  const { login, confirmSignup, needsConfirmation, confirmationEmail } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
@@ -30,10 +31,53 @@ export default function Login() {
     }
   };
 
+  const handleConfirm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await confirmSignup(confirmationEmail, confirmCode);
+      toast({ title: 'Email confirmed!', description: 'You can now sign in.' });
+    } catch (err: any) {
+      toast({ title: 'Confirmation failed', description: err.message, variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (needsConfirmation) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+        <div className="w-full max-w-sm space-y-8">
+          <div className="text-center">
+            <Link to="/landing" className="inline-flex items-center gap-2.5">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 glow-primary">
+                <Database className="h-5 w-5 text-primary" />
+              </div>
+              <span className="text-lg font-bold text-foreground">Athena Optimizer</span>
+            </Link>
+            <h1 className="mt-6 text-2xl font-bold text-foreground">Verify your email</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Enter the code sent to {confirmationEmail}</p>
+          </div>
+          <form onSubmit={handleConfirm} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="code">Verification Code</Label>
+              <div className="relative">
+                <KeyRound className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input id="code" placeholder="123456" value={confirmCode} onChange={e => setConfirmCode(e.target.value)} className="pl-10 text-center tracking-widest" required maxLength={10} />
+              </div>
+            </div>
+            <Button type="submit" className="w-full glow-primary" disabled={loading}>
+              {loading ? 'Verifying...' : 'Confirm & Sign In'}
+            </Button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm space-y-8">
-        {/* Logo */}
         <div className="text-center">
           <Link to="/landing" className="inline-flex items-center gap-2.5">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 glow-primary">
@@ -42,16 +86,15 @@ export default function Login() {
             <span className="text-lg font-bold text-foreground">Athena Optimizer</span>
           </Link>
           <h1 className="mt-6 text-2xl font-bold text-foreground">Welcome back</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Sign in to your account</p>
+          <p className="mt-1 text-sm text-muted-foreground">Sign in with your credentials</p>
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleLogin} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
             <div className="relative">
               <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input id="email" type="email" placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} className="pl-10" required />
+              <Input id="email" type="email" placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} className="pl-10" required maxLength={255} />
             </div>
           </div>
           <div className="space-y-2">
