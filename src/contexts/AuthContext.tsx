@@ -1,18 +1,19 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import {
-  CognitoUserPool,
-  CognitoUser,
-  AuthenticationDetails,
-  CognitoUserAttribute,
-  CognitoUserSession,
-} from 'amazon-cognito-identity-js';
-import { COGNITO_CONFIG } from '@/lib/cognitoConfig';
-import { getAwsIdentity, AwsIdentityInfo } from '@/lib/awsIdentity';
+import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
 
-const userPool = new CognitoUserPool({
-  UserPoolId: COGNITO_CONFIG.UserPoolId,
-  ClientId: COGNITO_CONFIG.ClientId,
-});
+export interface AwsCredentials {
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string;
+  region: string;
+}
+
+export interface AwsIdentityInfo {
+  arn: string;
+  accountId: string;
+  userId: string;
+  region: string;
+}
 
 interface User {
   id: string;
@@ -23,148 +24,114 @@ interface User {
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
+  credentials: AwsCredentials | null;
   awsIdentity: AwsIdentityInfo | null;
   awsIdentityLoading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  signup: (name: string, email: string, password: string) => Promise<void>;
-  confirmSignup: (email: string, code: string) => Promise<void>;
+  login: (creds: AwsCredentials) => Promise<void>;
   logout: () => void;
-  needsConfirmation: boolean;
-  confirmationEmail: string;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-function getAttributeValue(attrs: CognitoUserAttribute[], name: string): string {
-  return attrs.find((a) => a.getName() === name)?.getValue() || '';
+const CREDS_KEY = 'aws_creds';
+
+function loadStoredCreds(): AwsCredentials | null {
+  try {
+    const raw = sessionStorage.getItem(CREDS_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeCreds(creds: AwsCredentials) {
+  sessionStorage.setItem(CREDS_KEY, JSON.stringify(creds));
+}
+
+function clearCreds() {
+  sessionStorage.removeItem(CREDS_KEY);
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [credentials, setCredentials] = useState<AwsCredentials | null>(null);
   const [awsIdentity, setAwsIdentity] = useState<AwsIdentityInfo | null>(null);
   const [awsIdentityLoading, setAwsIdentityLoading] = useState(false);
-  const [needsConfirmation, setNeedsConfirmation] = useState(false);
-  const [confirmationEmail, setConfirmationEmail] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
 
-  const fetchAwsIdentity = async (session: CognitoUserSession) => {
-    setAwsIdentityLoading(true);
-    try {
-      const idToken = session.getIdToken().getJwtToken();
-      const identity = await getAwsIdentity(idToken);
-      setAwsIdentity(identity);
-    } catch (e) {
-      console.warn('Could not fetch AWS identity:', e);
-    } finally {
-      setAwsIdentityLoading(false);
-    }
+  const fetchIdentity = async (creds: AwsCredentials): Promise<AwsIdentityInfo> => {
+    const sts = new STSClient({
+      region: creds.region,
+      credentials: {
+        accessKeyId: creds.accessKeyId,
+        secretAccessKey: creds.secretAccessKey,
+        ...(creds.sessionToken ? { sessionToken: creds.sessionToken } : {}),
+      },
+    });
+    const identity = await sts.send(new GetCallerIdentityCommand({}));
+    return {
+      arn: identity.Arn || 'Unknown',
+      accountId: identity.Account || 'Unknown',
+      userId: identity.UserId || 'Unknown',
+      region: creds.region,
+    };
   };
 
-  // Check for existing session on mount
+  // Restore session on mount
   useEffect(() => {
-    const cognitoUser = userPool.getCurrentUser();
-    if (cognitoUser) {
-      cognitoUser.getSession((err: Error | null, session: CognitoUserSession | null) => {
-        if (err || !session?.isValid()) {
-          setIsLoading(false);
-          return;
-        }
-        cognitoUser.getUserAttributes((err, attrs) => {
-          if (err || !attrs) {
-            setIsLoading(false);
-            return;
-          }
+    const stored = loadStoredCreds();
+    if (stored) {
+      setCredentials(stored);
+      setAwsIdentityLoading(true);
+      fetchIdentity(stored)
+        .then((id) => {
+          setAwsIdentity(id);
           setUser({
-            id: getAttributeValue(attrs, 'sub'),
-            name: getAttributeValue(attrs, 'name'),
-            email: getAttributeValue(attrs, 'email'),
+            id: id.userId,
+            name: id.arn.split('/').pop() || 'AWS User',
+            email: `${id.accountId}@aws`,
           });
-          fetchAwsIdentity(session);
+        })
+        .catch(() => {
+          clearCreds();
+        })
+        .finally(() => {
+          setAwsIdentityLoading(false);
           setIsLoading(false);
         });
-      });
     } else {
       setIsLoading(false);
     }
   }, []);
 
-  const login = (email: string, password: string): Promise<void> => {
-    return new Promise((resolve, reject) => {
-      const cognitoUser = new CognitoUser({ Username: email, Pool: userPool });
-      const authDetails = new AuthenticationDetails({ Username: email, Password: password });
-
-      cognitoUser.authenticateUser(authDetails, {
-        onSuccess: (session) => {
-          cognitoUser.getUserAttributes((err, attrs) => {
-            if (err || !attrs) {
-              reject(new Error('Failed to get user attributes'));
-              return;
-            }
-            setUser({
-              id: getAttributeValue(attrs, 'sub'),
-              name: getAttributeValue(attrs, 'name'),
-              email: getAttributeValue(attrs, 'email'),
-            });
-            fetchAwsIdentity(session);
-            resolve();
-          });
-        },
-        onFailure: (err) => {
-          if (err.code === 'UserNotConfirmedException') {
-            setNeedsConfirmation(true);
-            setConfirmationEmail(email);
-            reject(new Error('Please confirm your email first. Check your inbox for a verification code.'));
-          } else {
-            reject(new Error(err.message || 'Login failed'));
-          }
-        },
+  const login = async (creds: AwsCredentials) => {
+    setAwsIdentityLoading(true);
+    try {
+      const id = await fetchIdentity(creds);
+      setAwsIdentity(id);
+      setCredentials(creds);
+      storeCreds(creds);
+      setUser({
+        id: id.userId,
+        name: id.arn.split('/').pop() || 'AWS User',
+        email: `${id.accountId}@aws`,
       });
-    });
-  };
-
-  const signup = (name: string, email: string, password: string): Promise<void> => {
-    return new Promise((resolve, reject) => {
-      const attributes = [
-        new CognitoUserAttribute({ Name: 'email', Value: email }),
-        new CognitoUserAttribute({ Name: 'name', Value: name }),
-      ];
-
-      userPool.signUp(email, password, attributes, [], (err, result) => {
-        if (err) {
-          reject(new Error(err.message || 'Signup failed'));
-          return;
-        }
-        setNeedsConfirmation(true);
-        setConfirmationEmail(email);
-        resolve();
-      });
-    });
-  };
-
-  const confirmSignup = (email: string, code: string): Promise<void> => {
-    return new Promise((resolve, reject) => {
-      const cognitoUser = new CognitoUser({ Username: email, Pool: userPool });
-      cognitoUser.confirmRegistration(code, true, (err) => {
-        if (err) {
-          reject(new Error(err.message || 'Confirmation failed'));
-          return;
-        }
-        setNeedsConfirmation(false);
-        setConfirmationEmail('');
-        resolve();
-      });
-    });
+    } catch (e: any) {
+      throw new Error(e.message || 'Invalid AWS credentials');
+    } finally {
+      setAwsIdentityLoading(false);
+    }
   };
 
   const logout = () => {
-    const cognitoUser = userPool.getCurrentUser();
-    if (cognitoUser) cognitoUser.signOut();
     setUser(null);
+    setCredentials(null);
     setAwsIdentity(null);
+    clearCreds();
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, awsIdentity, awsIdentityLoading, login, signup, confirmSignup, logout, needsConfirmation, confirmationEmail }}>
+    <AuthContext.Provider value={{ user, isLoading, credentials, awsIdentity, awsIdentityLoading, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

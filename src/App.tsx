@@ -7,7 +7,6 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import AppLayout from "./components/AppLayout";
 import Landing from "./pages/Landing";
 import Login from "./pages/Login";
-import Signup from "./pages/Signup";
 import Dashboard from "./pages/Dashboard";
 import Analyzer from "./pages/Analyzer";
 import Results from "./pages/Results";
@@ -34,12 +33,9 @@ function PublicOnly({ children }: { children: React.ReactNode }) {
 
 const AppRoutes = () => (
   <Routes>
-    {/* Public */}
     <Route path="/landing" element={<PublicOnly><Landing /></PublicOnly>} />
     <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
-    <Route path="/signup" element={<PublicOnly><Signup /></PublicOnly>} />
 
-    {/* Protected with sidebar */}
     <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
       <Route path="/" element={<Dashboard />} />
       <Route path="/analyzer" element={<Analyzer />} />
