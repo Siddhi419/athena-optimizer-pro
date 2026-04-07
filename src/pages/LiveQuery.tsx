@@ -1,9 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { getTempCredentials } from '@/lib/athenaCredentials';
 import { executeAthenaQuery, AthenaQueryResult } from '@/lib/athenaClient';
-import { CognitoUserPool, CognitoUserSession } from 'amazon-cognito-identity-js';
-import { COGNITO_CONFIG } from '@/lib/cognitoConfig';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,11 +9,6 @@ import {
   Play, Loader2, Database, Clock, HardDrive, AlertTriangle, CheckCircle2, Terminal,
 } from 'lucide-react';
 import { toast } from 'sonner';
-
-const userPool = new CognitoUserPool({
-  UserPoolId: COGNITO_CONFIG.UserPoolId,
-  ClientId: COGNITO_CONFIG.ClientId,
-});
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -33,12 +25,12 @@ function formatMs(ms: number): string {
 
 function estimateCost(bytes: number): string {
   const tb = bytes / (1024 ** 4);
-  const cost = Math.max(tb * 5, 0); // $5 per TB
+  const cost = Math.max(tb * 5, 0);
   return cost < 0.01 ? '< $0.01' : `$${cost.toFixed(4)}`;
 }
 
 export default function LiveQuery() {
-  const { user } = useAuth();
+  const { credentials } = useAuth();
   const [sql, setSql] = useState('');
   const [database, setDatabase] = useState('default');
   const [outputLocation, setOutputLocation] = useState('s3://athena-query-results-bucket/');
@@ -46,27 +38,19 @@ export default function LiveQuery() {
   const [result, setResult] = useState<AthenaQueryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const getIdToken = (): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const cognitoUser = userPool.getCurrentUser();
-      if (!cognitoUser) return reject(new Error('Not authenticated'));
-      cognitoUser.getSession((err: Error | null, session: CognitoUserSession | null) => {
-        if (err || !session?.isValid()) return reject(new Error('Session expired'));
-        resolve(session.getIdToken().getJwtToken());
-      });
-    });
-  };
-
   const handleExecute = useCallback(async () => {
-    if (!sql.trim()) return;
+    if (!sql.trim() || !credentials) return;
     setIsRunning(true);
     setError(null);
     setResult(null);
 
     try {
-      const idToken = await getIdToken();
-      const creds = await getTempCredentials(idToken);
-      const queryResult = await executeAthenaQuery(sql, creds, database, outputLocation);
+      const creds = {
+        accessKeyId: credentials.accessKeyId,
+        secretAccessKey: credentials.secretAccessKey,
+        sessionToken: credentials.sessionToken || '',
+      };
+      const queryResult = await executeAthenaQuery(sql, creds, database, outputLocation, credentials.region);
       setResult(queryResult);
       toast.success('Query executed successfully');
     } catch (e: any) {
@@ -76,7 +60,7 @@ export default function LiveQuery() {
     } finally {
       setIsRunning(false);
     }
-  }, [sql, database, outputLocation]);
+  }, [sql, database, outputLocation, credentials]);
 
   return (
     <div className="space-y-6 p-6">
@@ -86,68 +70,36 @@ export default function LiveQuery() {
           Live Query Execution
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Run SQL queries directly on Amazon Athena using your temporary IAM credentials.
+          Run SQL queries directly on Amazon Athena using your IAM credentials.
         </p>
       </div>
 
-      {/* Config row */}
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Database</label>
-          <Input
-            value={database}
-            onChange={(e) => setDatabase(e.target.value)}
-            placeholder="default"
-            className="border-border bg-muted font-mono text-sm"
-          />
+          <Input value={database} onChange={(e) => setDatabase(e.target.value)} placeholder="default" className="border-border bg-muted font-mono text-sm" />
         </div>
         <div>
           <label className="mb-1.5 block text-xs font-medium text-muted-foreground">S3 Output Location</label>
-          <Input
-            value={outputLocation}
-            onChange={(e) => setOutputLocation(e.target.value)}
-            placeholder="s3://your-bucket/athena-results/"
-            className="border-border bg-muted font-mono text-sm"
-          />
+          <Input value={outputLocation} onChange={(e) => setOutputLocation(e.target.value)} placeholder="s3://your-bucket/athena-results/" className="border-border bg-muted font-mono text-sm" />
         </div>
       </div>
 
-      {/* SQL Editor */}
       <div className="rounded-xl border border-border bg-card p-6">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-            SQL Query
-          </h2>
-          <Badge variant="outline" className="text-xs border-primary/30 text-primary">
-            Live Execution
-          </Badge>
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">SQL Query</h2>
+          <Badge variant="outline" className="text-xs border-primary/30 text-primary">Live Execution</Badge>
         </div>
-        <Textarea
-          value={sql}
-          onChange={(e) => setSql(e.target.value)}
-          placeholder="SELECT * FROM your_table LIMIT 10;"
-          className="min-h-[140px] resize-none rounded-lg border-border bg-muted font-mono text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
-        />
+        <Textarea value={sql} onChange={(e) => setSql(e.target.value)} placeholder="SELECT * FROM your_table LIMIT 10;" className="min-h-[140px] resize-none rounded-lg border-border bg-muted font-mono text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary" />
         <div className="mt-3 flex items-center justify-between">
-          <p className="text-xs text-muted-foreground">
-            Queries are executed with temporary IAM credentials (auto-expire).
-          </p>
-          <Button
-            onClick={handleExecute}
-            disabled={!sql.trim() || isRunning}
-            className="bg-primary text-primary-foreground glow-primary hover:opacity-90"
-          >
-            {isRunning ? (
-              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-            ) : (
-              <Play className="mr-1.5 h-4 w-4" />
-            )}
+          <p className="text-xs text-muted-foreground">Queries run with your IAM credentials directly.</p>
+          <Button onClick={handleExecute} disabled={!sql.trim() || isRunning || !credentials} className="bg-primary text-primary-foreground glow-primary hover:opacity-90">
+            {isRunning ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Play className="mr-1.5 h-4 w-4" />}
             {isRunning ? 'Running…' : 'Execute Query'}
           </Button>
         </div>
       </div>
 
-      {/* Error */}
       {error && (
         <div className="flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4">
           <AlertTriangle className="mt-0.5 h-5 w-5 text-destructive shrink-0" />
@@ -158,10 +110,8 @@ export default function LiveQuery() {
         </div>
       )}
 
-      {/* Results */}
       {result && (
         <div className="space-y-4">
-          {/* Stats */}
           <div className="grid gap-4 sm:grid-cols-4">
             {[
               { icon: CheckCircle2, label: 'Status', value: result.state, color: 'text-green-400' },
@@ -179,33 +129,24 @@ export default function LiveQuery() {
             ))}
           </div>
 
-          {/* Table */}
           <div className="rounded-xl border border-border bg-card overflow-hidden">
             <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 bg-secondary">
                   <tr>
                     {result.columns.map((col, i) => (
-                      <th key={i} className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
-                        {col}
-                      </th>
+                      <th key={i} className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">{col}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {result.rows.length === 0 ? (
-                    <tr>
-                      <td colSpan={result.columns.length} className="px-4 py-8 text-center text-muted-foreground">
-                        No results returned
-                      </td>
-                    </tr>
+                    <tr><td colSpan={result.columns.length} className="px-4 py-8 text-center text-muted-foreground">No results returned</td></tr>
                   ) : (
                     result.rows.map((row, ri) => (
                       <tr key={ri} className="border-t border-border hover:bg-muted/50 transition-colors">
                         {row.map((cell, ci) => (
-                          <td key={ci} className="px-4 py-2 text-foreground whitespace-nowrap">
-                            {cell || <span className="text-muted-foreground italic">null</span>}
-                          </td>
+                          <td key={ci} className="px-4 py-2 text-foreground whitespace-nowrap">{cell || <span className="text-muted-foreground italic">null</span>}</td>
                         ))}
                       </tr>
                     ))
@@ -220,14 +161,11 @@ export default function LiveQuery() {
         </div>
       )}
 
-      {/* Empty state */}
       {!result && !error && !isRunning && (
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-16 text-center">
           <Database className="mb-4 h-12 w-12 text-muted-foreground/30" />
           <p className="text-lg font-medium text-muted-foreground">Ready to execute</p>
-          <p className="mt-1 text-sm text-muted-foreground/60">
-            Enter a SQL query and click Execute to run it on Athena
-          </p>
+          <p className="mt-1 text-sm text-muted-foreground/60">Enter a SQL query and click Execute to run it on Athena</p>
         </div>
       )}
     </div>
