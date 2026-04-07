@@ -33,7 +33,7 @@ export default function Landing() {
             <Button variant="ghost" size="sm" onClick={() => navigate('/login')}>
               Sign In
             </Button>
-            <Button size="sm" onClick={() => navigate('/signup')} className="glow-primary">
+            <Button size="sm" onClick={() => navigate('/login')} className="glow-primary">
               Get Started
             </Button>
           </div>
@@ -56,7 +56,7 @@ export default function Landing() {
             Analyze, optimize, and reduce costs for your Amazon Athena queries with intelligent rule-based suggestions that save you time and money.
           </p>
           <div className="mt-10 flex items-center justify-center gap-4">
-            <Button size="lg" onClick={() => navigate('/signup')} className="glow-primary px-8">
+            <Button size="lg" onClick={() => navigate('/login')} className="glow-primary px-8">
               Start Free <ArrowRight className="ml-2 h-4 w-4" />
             </Button>
             <Button variant="outline" size="lg" onClick={() => navigate('/login')}>
