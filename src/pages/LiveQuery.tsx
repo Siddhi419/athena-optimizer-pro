@@ -1,12 +1,21 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { executeAthenaQuery, AthenaQueryResult } from '@/lib/athenaClient';
+import { listDatabases, listTables, CatalogDatabase, CatalogTable } from '@/lib/glueCatalog';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
   Play, Loader2, Database, Clock, HardDrive, AlertTriangle, CheckCircle2, Terminal,
+  RefreshCw, Table2, Columns3,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -32,11 +41,68 @@ function estimateCost(bytes: number): string {
 export default function LiveQuery() {
   const { credentials } = useAuth();
   const [sql, setSql] = useState('');
-  const [database, setDatabase] = useState('default');
+  const [database, setDatabase] = useState('');
   const [outputLocation, setOutputLocation] = useState('s3://athena-query-results-bucket/');
   const [isRunning, setIsRunning] = useState(false);
   const [result, setResult] = useState<AthenaQueryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Catalog state
+  const [databases, setDatabases] = useState<CatalogDatabase[]>([]);
+  const [tables, setTables] = useState<CatalogTable[]>([]);
+  const [selectedTable, setSelectedTable] = useState<string>('');
+  const [loadingDbs, setLoadingDbs] = useState(false);
+  const [loadingTables, setLoadingTables] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+
+  const getCreds = useCallback(() => {
+    if (!credentials) return null;
+    return {
+      accessKeyId: credentials.accessKeyId,
+      secretAccessKey: credentials.secretAccessKey,
+      sessionToken: credentials.sessionToken || '',
+      region: credentials.region,
+    };
+  }, [credentials]);
+
+  // Fetch databases on mount
+  useEffect(() => {
+    const creds = getCreds();
+    if (!creds) return;
+    setLoadingDbs(true);
+    setCatalogError(null);
+    listDatabases(creds)
+      .then((dbs) => {
+        setDatabases(dbs);
+        if (dbs.length > 0 && !database) {
+          setDatabase(dbs[0].name);
+        }
+      })
+      .catch((e) => setCatalogError(e.message || 'Failed to list databases'))
+      .finally(() => setLoadingDbs(false));
+  }, [credentials]);
+
+  // Fetch tables when database changes
+  useEffect(() => {
+    const creds = getCreds();
+    if (!creds || !database) {
+      setTables([]);
+      return;
+    }
+    setLoadingTables(true);
+    setSelectedTable('');
+    listTables(creds, database)
+      .then(setTables)
+      .catch(() => setTables([]))
+      .finally(() => setLoadingTables(false));
+  }, [database, credentials]);
+
+  const handleInsertTable = (tableName: string) => {
+    setSelectedTable(tableName);
+    if (!sql.trim()) {
+      setSql(`SELECT * FROM ${database}.${tableName} LIMIT 10;`);
+    }
+  };
 
   const handleExecute = useCallback(async () => {
     if (!sql.trim() || !credentials) return;
@@ -50,7 +116,7 @@ export default function LiveQuery() {
         secretAccessKey: credentials.secretAccessKey,
         sessionToken: credentials.sessionToken || '',
       };
-      const queryResult = await executeAthenaQuery(sql, creds, database, outputLocation, credentials.region);
+      const queryResult = await executeAthenaQuery(sql, creds, database || 'default', outputLocation, credentials.region);
       setResult(queryResult);
       toast.success('Query executed successfully');
     } catch (e: any) {
@@ -61,6 +127,20 @@ export default function LiveQuery() {
       setIsRunning(false);
     }
   }, [sql, database, outputLocation, credentials]);
+
+  const refreshCatalog = () => {
+    const creds = getCreds();
+    if (!creds) return;
+    setLoadingDbs(true);
+    setCatalogError(null);
+    listDatabases(creds)
+      .then((dbs) => {
+        setDatabases(dbs);
+        toast.success(`Found ${dbs.length} database(s)`);
+      })
+      .catch((e) => setCatalogError(e.message))
+      .finally(() => setLoadingDbs(false));
+  };
 
   return (
     <div className="space-y-6 p-6">
@@ -74,17 +154,113 @@ export default function LiveQuery() {
         </p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div>
-          <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Database</label>
-          <Input value={database} onChange={(e) => setDatabase(e.target.value)} placeholder="default" className="border-border bg-muted font-mono text-sm" />
+      {/* Catalog Browser */}
+      <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+            <Database className="h-4 w-4 text-primary" />
+            Data Catalog
+          </h2>
+          <Button variant="ghost" size="sm" onClick={refreshCatalog} disabled={loadingDbs}>
+            <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${loadingDbs ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
         </div>
-        <div>
-          <label className="mb-1.5 block text-xs font-medium text-muted-foreground">S3 Output Location</label>
-          <Input value={outputLocation} onChange={(e) => setOutputLocation(e.target.value)} placeholder="s3://your-bucket/athena-results/" className="border-border bg-muted font-mono text-sm" />
+
+        {catalogError && (
+          <div className="flex items-center gap-2 text-xs text-destructive bg-destructive/5 border border-destructive/20 rounded-lg px-3 py-2">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            {catalogError}
+          </div>
+        )}
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Database</label>
+            {loadingDbs ? (
+              <div className="flex items-center gap-2 h-10 px-3 rounded-md border border-border bg-muted text-sm text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Loading databases...
+              </div>
+            ) : databases.length > 0 ? (
+              <Select value={database} onValueChange={setDatabase}>
+                <SelectTrigger className="border-border bg-muted font-mono text-sm">
+                  <SelectValue placeholder="Select database" />
+                </SelectTrigger>
+                <SelectContent>
+                  {databases.map((db) => (
+                    <SelectItem key={db.name} value={db.name} className="font-mono text-sm">
+                      {db.name}
+                      {db.description && <span className="ml-2 text-muted-foreground text-xs">— {db.description}</span>}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input value={database} onChange={(e) => setDatabase(e.target.value)} placeholder="default" className="border-border bg-muted font-mono text-sm" />
+            )}
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-muted-foreground">S3 Output Location</label>
+            <Input value={outputLocation} onChange={(e) => setOutputLocation(e.target.value)} placeholder="s3://your-bucket/athena-results/" className="border-border bg-muted font-mono text-sm" />
+          </div>
         </div>
+
+        {/* Tables list */}
+        {database && (
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+              <Table2 className="h-3.5 w-3.5" />
+              Tables in <span className="font-mono text-primary">{database}</span>
+            </label>
+            {loadingTables ? (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading tables...
+              </div>
+            ) : tables.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {tables.map((t) => (
+                  <button
+                    key={t.name}
+                    onClick={() => handleInsertTable(t.name)}
+                    className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-mono transition-colors ${
+                      selectedTable === t.name
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-muted text-foreground hover:border-primary/50'
+                    }`}
+                  >
+                    <Table2 className="h-3 w-3" />
+                    {t.name}
+                    <span className="text-muted-foreground">({t.columns.length} cols)</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground py-2">No tables found in this database.</p>
+            )}
+          </div>
+        )}
+
+        {/* Column preview for selected table */}
+        {selectedTable && tables.find(t => t.name === selectedTable) && (
+          <div className="rounded-lg border border-border bg-muted/50 p-3">
+            <p className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
+              <Columns3 className="h-3.5 w-3.5" />
+              Columns in <span className="font-mono text-primary">{selectedTable}</span>
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {tables.find(t => t.name === selectedTable)!.columns.map((col) => (
+                <span key={col.name} className="inline-flex items-center gap-1 rounded border border-border bg-card px-2 py-0.5 text-xs">
+                  <span className="font-mono text-foreground">{col.name}</span>
+                  <span className="text-muted-foreground">{col.type}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
+      {/* SQL Editor */}
       <div className="rounded-xl border border-border bg-card p-6">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">SQL Query</h2>
@@ -165,7 +341,7 @@ export default function LiveQuery() {
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-16 text-center">
           <Database className="mb-4 h-12 w-12 text-muted-foreground/30" />
           <p className="text-lg font-medium text-muted-foreground">Ready to execute</p>
-          <p className="mt-1 text-sm text-muted-foreground/60">Enter a SQL query and click Execute to run it on Athena</p>
+          <p className="mt-1 text-sm text-muted-foreground/60">Select a database and table above, or write your own query</p>
         </div>
       )}
     </div>
