@@ -32,6 +32,7 @@ export interface CatalogTable {
   name: string;
   databaseName: string;
   columns: { name: string; type: string }[];
+  partitionKeys: { name: string; type: string }[];
   location?: string;
   tableType?: string;
   rowCount?: number;
@@ -69,6 +70,7 @@ export async function listTables(creds: CatalogCreds, databaseName: string): Pro
         name: t.Name || '',
         databaseName,
         columns: (t.StorageDescriptor?.Columns || []).map(c => ({ name: c.Name || '', type: c.Type || '' })),
+        partitionKeys: (t.PartitionKeys || []).map(c => ({ name: c.Name || '', type: c.Type || '' })),
         location: t.StorageDescriptor?.Location,
         tableType: t.TableType,
       });
