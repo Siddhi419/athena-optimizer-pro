@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { analyzeQuery, AnalysisResult, estimateCostFromBytes, SAMPLE_QUERIES } from '@/lib/queryAnalyzer';
-import { explainAthenaQuery, ExplainResult } from '@/lib/athenaClient';
+import { explainAthenaQuery, listWorkgroups, AthenaWorkgroup } from '@/lib/athenaClient';
 import { listDatabases, listTables, CatalogDatabase, CatalogTable } from '@/lib/glueCatalog';
 import SuggestionsPanel from '@/components/SuggestionsPanel';
 import ComparisonDashboard from '@/components/ComparisonDashboard';
@@ -36,7 +36,9 @@ export default function Analyzer() {
   const [loadingDbs, setLoadingDbs] = useState(false);
   const [loadingTables, setLoadingTables] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
-  const [outputLocation, setOutputLocation] = useState('s3://athena-query-results-bucket/');
+  const [outputLocation, setOutputLocation] = useState('');
+  const [workgroups, setWorkgroups] = useState<AthenaWorkgroup[]>([]);
+  const [loadingWorkgroups, setLoadingWorkgroups] = useState(false);
 
   const getCreds = useCallback(() => {
     if (!credentials) return null;
@@ -48,10 +50,12 @@ export default function Analyzer() {
     };
   }, [credentials]);
 
-  // Fetch databases on mount
+  // Fetch databases and workgroups on mount
   useEffect(() => {
     const creds = getCreds();
     if (!creds) return;
+
+    // Fetch Glue databases
     setLoadingDbs(true);
     setCatalogError(null);
     listDatabases(creds)
@@ -61,6 +65,23 @@ export default function Analyzer() {
       })
       .catch((e) => setCatalogError(e.message || 'Failed to list databases'))
       .finally(() => setLoadingDbs(false));
+
+    // Fetch Athena workgroups for S3 output location
+    setLoadingWorkgroups(true);
+    listWorkgroups(
+      { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey, sessionToken: creds.sessionToken || '' },
+      creds.region
+    )
+      .then((wgs) => {
+        setWorkgroups(wgs);
+        // Auto-set output location from the primary workgroup
+        const primary = wgs.find(w => w.name === 'primary') || wgs[0];
+        if (primary?.outputLocation && !outputLocation) {
+          setOutputLocation(primary.outputLocation);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoadingWorkgroups(false));
   }, [credentials]);
 
   // Fetch tables when database changes
@@ -84,11 +105,7 @@ export default function Analyzer() {
 
   const selectedTableMeta = tables.find(t => t.name === selectedTable);
   const realColumns = selectedTableMeta?.columns.map(c => c.name);
-  // Partition keys are often stored as partitionKeys in Glue but our simple fetch
-  // puts them in columns — we detect common partition key names
-  const partitionKeys = selectedTableMeta?.columns
-    .filter(c => ['year', 'month', 'day', 'date', 'dt', 'partition', 'hour'].includes(c.name.toLowerCase()))
-    .map(c => c.name);
+  const partitionKeys = selectedTableMeta?.partitionKeys?.map(c => c.name);
 
   const handleAnalyze = async () => {
     if (!query.trim()) return;
