@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { executeAthenaQuery, AthenaQueryResult } from '@/lib/athenaClient';
+import { executeAthenaQuery, AthenaQueryResult, listWorkgroups, AthenaWorkgroup } from '@/lib/athenaClient';
 import { listDatabases, listTables, CatalogDatabase, CatalogTable } from '@/lib/glueCatalog';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
@@ -42,7 +42,7 @@ export default function LiveQuery() {
   const { credentials } = useAuth();
   const [sql, setSql] = useState('');
   const [database, setDatabase] = useState('');
-  const [outputLocation, setOutputLocation] = useState('s3://athena-query-results-bucket/');
+  const [outputLocation, setOutputLocation] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [result, setResult] = useState<AthenaQueryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -54,6 +54,7 @@ export default function LiveQuery() {
   const [loadingDbs, setLoadingDbs] = useState(false);
   const [loadingTables, setLoadingTables] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [workgroups, setWorkgroups] = useState<AthenaWorkgroup[]>([]);
 
   const getCreds = useCallback(() => {
     if (!credentials) return null;
@@ -65,21 +66,34 @@ export default function LiveQuery() {
     };
   }, [credentials]);
 
-  // Fetch databases on mount
+  // Fetch databases and workgroups on mount
   useEffect(() => {
     const creds = getCreds();
     if (!creds) return;
+
     setLoadingDbs(true);
     setCatalogError(null);
     listDatabases(creds)
       .then((dbs) => {
         setDatabases(dbs);
-        if (dbs.length > 0 && !database) {
-          setDatabase(dbs[0].name);
-        }
+        if (dbs.length > 0 && !database) setDatabase(dbs[0].name);
       })
       .catch((e) => setCatalogError(e.message || 'Failed to list databases'))
       .finally(() => setLoadingDbs(false));
+
+    // Auto-detect S3 output location from Athena workgroups
+    listWorkgroups(
+      { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey, sessionToken: creds.sessionToken || '' },
+      creds.region
+    )
+      .then((wgs) => {
+        setWorkgroups(wgs);
+        const primary = wgs.find(w => w.name === 'primary') || wgs[0];
+        if (primary?.outputLocation && !outputLocation) {
+          setOutputLocation(primary.outputLocation);
+        }
+      })
+      .catch(() => {});
   }, [credentials]);
 
   // Fetch tables when database changes
@@ -242,22 +256,39 @@ export default function LiveQuery() {
         )}
 
         {/* Column preview for selected table */}
-        {selectedTable && tables.find(t => t.name === selectedTable) && (
-          <div className="rounded-lg border border-border bg-muted/50 p-3">
-            <p className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
-              <Columns3 className="h-3.5 w-3.5" />
-              Columns in <span className="font-mono text-primary">{selectedTable}</span>
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {tables.find(t => t.name === selectedTable)!.columns.map((col) => (
-                <span key={col.name} className="inline-flex items-center gap-1 rounded border border-border bg-card px-2 py-0.5 text-xs">
-                  <span className="font-mono text-foreground">{col.name}</span>
-                  <span className="text-muted-foreground">{col.type}</span>
-                </span>
-              ))}
+        {selectedTable && tables.find(t => t.name === selectedTable) && (() => {
+          const tbl = tables.find(t => t.name === selectedTable)!;
+          return (
+            <div className="rounded-lg border border-border bg-muted/50 p-3">
+              <p className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
+                <Columns3 className="h-3.5 w-3.5" />
+                Columns in <span className="font-mono text-primary">{selectedTable}</span>
+                {tbl.location && <span className="ml-2 text-muted-foreground/70 text-[10px]">📁 {tbl.location}</span>}
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {tbl.columns.map((col) => (
+                  <span key={col.name} className="inline-flex items-center gap-1 rounded border border-border bg-card px-2 py-0.5 text-xs">
+                    <span className="font-mono text-foreground">{col.name}</span>
+                    <span className="text-muted-foreground">{col.type}</span>
+                  </span>
+                ))}
+              </div>
+              {tbl.partitionKeys.length > 0 && (
+                <div className="mt-2">
+                  <p className="text-[10px] font-medium text-muted-foreground mb-1">Partition Keys:</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {tbl.partitionKeys.map((col) => (
+                      <span key={col.name} className="inline-flex items-center gap-1 rounded border border-primary/30 bg-primary/5 px-2 py-0.5 text-xs">
+                        <span className="font-mono text-primary">{col.name}</span>
+                        <span className="text-muted-foreground">{col.type}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
 
       {/* SQL Editor */}

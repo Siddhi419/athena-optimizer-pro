@@ -4,6 +4,8 @@ import {
   GetQueryExecutionCommand,
   GetQueryResultsCommand,
   QueryExecutionState,
+  ListWorkGroupsCommand,
+  GetWorkGroupCommand,
 } from '@aws-sdk/client-athena';
 
 export interface AthenaQueryResult {
@@ -108,7 +110,6 @@ export async function explainAthenaQuery(
 ): Promise<ExplainResult> {
   const client = createAthenaClient(creds, region);
 
-  // Try EXPLAIN ANALYZE first, fall back to EXPLAIN
   for (const prefix of ['EXPLAIN ANALYZE', 'EXPLAIN']) {
     try {
       const startResult = await client.send(
@@ -134,9 +135,48 @@ export async function explainAthenaQuery(
       return { dataScannedBytes, executionTimeMs, queryPlan };
     } catch {
       if (prefix === 'EXPLAIN') throw new Error('EXPLAIN query failed');
-      // Fall through to try plain EXPLAIN
     }
   }
 
   throw new Error('Failed to explain query');
+}
+
+/** Workgroup info with S3 output location */
+export interface AthenaWorkgroup {
+  name: string;
+  outputLocation?: string;
+  state?: string;
+}
+
+/** List all Athena workgroups to find configured S3 output locations */
+export async function listWorkgroups(
+  creds: TempCredentials,
+  region: string
+): Promise<AthenaWorkgroup[]> {
+  const client = createAthenaClient(creds, region);
+  const workgroups: AthenaWorkgroup[] = [];
+  let nextToken: string | undefined;
+
+  do {
+    const res = await client.send(new ListWorkGroupsCommand({ NextToken: nextToken }));
+    for (const wg of res.WorkGroups || []) {
+      workgroups.push({
+        name: wg.Name || '',
+        state: wg.State,
+      });
+    }
+    nextToken = res.NextToken;
+  } while (nextToken);
+
+  // Fetch output location for each workgroup
+  for (const wg of workgroups) {
+    try {
+      const detail = await client.send(new GetWorkGroupCommand({ WorkGroup: wg.name }));
+      wg.outputLocation = detail.WorkGroup?.Configuration?.ResultConfiguration?.OutputLocation;
+    } catch {
+      // Skip if we can't read workgroup details
+    }
+  }
+
+  return workgroups;
 }
