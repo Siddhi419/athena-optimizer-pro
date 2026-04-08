@@ -20,22 +20,8 @@ export interface CostEstimate {
 }
 
 const ATHENA_COST_PER_TB = 5.0;
+
 const SQL_KEYWORDS = ['SELECT', 'FROM', 'WHERE', 'JOIN', 'ON', 'GROUP', 'BY', 'ORDER', 'HAVING', 'LIMIT', 'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'DROP', 'ALTER', 'AND', 'OR', 'NOT', 'IN', 'BETWEEN', 'LIKE', 'IS', 'NULL', 'AS', 'DISTINCT', 'COUNT', 'SUM', 'AVG', 'MAX', 'MIN', 'UNION', 'ALL', 'EXISTS', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END', 'WITH', 'PARTITION', 'OVER', 'ROW_NUMBER', 'RANK', 'INNER', 'LEFT', 'RIGHT', 'OUTER', 'FULL', 'CROSS', 'INTO', 'VALUES', 'SET', 'TABLE', 'INDEX', 'VIEW', 'ASC', 'DESC', 'OFFSET', 'FETCH', 'NEXT', 'ROWS', 'ONLY'];
-
-function normalizeSQL(query: string): string {
-  return query.replace(/\s+/g, ' ').trim().toUpperCase();
-}
-
-function extractTableName(query: string): string {
-  const match = query.match(/FROM\s+(\w+)/i);
-  return match ? match[1] : 'unknown_table';
-}
-
-function extractColumns(query: string): string[] {
-  const match = query.match(/SELECT\s+(.*?)\s+FROM/is);
-  if (!match) return [];
-  return match[1].split(',').map(c => c.trim());
-}
 
 function hasSelectStar(query: string): boolean {
   return /SELECT\s+\*/i.test(query);
@@ -45,10 +31,10 @@ function hasWhereClause(query: string): boolean {
   return /WHERE\s+/i.test(query);
 }
 
-function hasPartitionFilter(query: string): boolean {
-  const partitionKeys = ['year', 'month', 'date', 'dt', 'partition', 'day'];
-  const normalized = normalizeSQL(query);
-  return partitionKeys.some(key => normalized.includes(key.toUpperCase()));
+function hasPartitionFilter(query: string, partitionKeys?: string[]): boolean {
+  const keys = partitionKeys?.length ? partitionKeys : ['year', 'month', 'date', 'dt', 'partition', 'day'];
+  const upper = query.toUpperCase();
+  return keys.some(key => upper.includes(key.toUpperCase()));
 }
 
 function hasLimit(query: string): boolean {
@@ -65,82 +51,46 @@ function hasJoinWithoutCondition(query: string): boolean {
   return joinCount > onCount;
 }
 
-function estimateCost(dataGB: number): CostEstimate {
-  const costUSD = (dataGB / 1024) * ATHENA_COST_PER_TB;
-  const estimatedTimeSeconds = Math.max(2, dataGB * 0.8 + Math.random() * 5);
-  return { dataScannedGB: dataGB, costUSD: Math.round(costUSD * 10000) / 10000, estimatedTimeSeconds: Math.round(estimatedTimeSeconds * 10) / 10 };
+function extractTableName(query: string): string {
+  const match = query.match(/FROM\s+(\S+)/i);
+  return match ? match[1] : 'unknown_table';
 }
 
-function generateOptimizedQuery(query: string, issues: QueryIssue[]): string {
-  let optimized = query.trim();
-  const table = extractTableName(query);
-
-  // Replace SELECT * with specific columns
-  if (issues.some(i => i.id === 'select-star')) {
-    const sampleColumns = getSampleColumns(table);
-    optimized = optimized.replace(/SELECT\s+\*/i, `SELECT ${sampleColumns.join(', ')}`);
-  }
-
-  // Add partition filter
-  if (issues.some(i => i.id === 'no-partition')) {
-    if (hasWhereClause(optimized)) {
-      optimized = optimized.replace(/WHERE\s+/i, 'WHERE year = 2024 AND ');
-    } else {
-      optimized = optimized.replace(
-        new RegExp(`(FROM\\s+${table})`, 'i'),
-        `$1 WHERE year = 2024`
-      );
-    }
-  }
-
-  // Add LIMIT if missing
-  if (issues.some(i => i.id === 'no-limit') && !hasLimit(optimized)) {
-    optimized = optimized.replace(/;?\s*$/, ' LIMIT 1000;');
-  }
-
-  if (!optimized.endsWith(';')) optimized += ';';
-  return optimized;
-}
-
-function getSampleColumns(table: string): string[] {
-  const columnMap: Record<string, string[]> = {
-    sales: ['product', 'price', 'quantity', 'sale_date', 'region'],
-    orders: ['order_id', 'customer_id', 'total', 'order_date', 'status'],
-    logs: ['timestamp', 'level', 'message', 'source'],
-    users: ['user_id', 'name', 'email', 'created_at'],
-    events: ['event_id', 'event_type', 'timestamp', 'user_id'],
+export function estimateCostFromBytes(bytes: number): CostEstimate {
+  const gb = bytes / (1024 ** 3);
+  const costUSD = (gb / 1024) * ATHENA_COST_PER_TB;
+  return {
+    dataScannedGB: Math.round(gb * 1000) / 1000,
+    costUSD: Math.round(costUSD * 10000) / 10000,
+    estimatedTimeSeconds: 0,
   };
-  return columnMap[table.toLowerCase()] || ['id', 'name', 'created_at', 'status'];
 }
 
-function estimateBaseDataScan(query: string): number {
-  let base = 500; // base GB for full table scan
-  if (!hasSelectStar(query)) base *= 0.3;
-  if (hasWhereClause(query)) base *= 0.4;
-  if (hasPartitionFilter(query)) base *= 0.1;
-  if (hasLimit(query)) base *= 0.5;
-  return Math.max(1, Math.round(base));
-}
-
-export function analyzeQuery(query: string): AnalysisResult {
+/** Analyze query using real column metadata when available */
+export function analyzeQuery(
+  query: string,
+  realColumns?: string[],
+  partitionKeys?: string[]
+): AnalysisResult {
   const issues: QueryIssue[] = [];
 
   if (!query.trim()) {
     return {
       issues: [],
       optimizedQuery: '',
-      originalEstimate: estimateCost(0),
-      optimizedEstimate: estimateCost(0),
+      originalEstimate: { dataScannedGB: 0, costUSD: 0, estimatedTimeSeconds: 0 },
+      optimizedEstimate: { dataScannedGB: 0, costUSD: 0, estimatedTimeSeconds: 0 },
     };
   }
 
   if (hasSelectStar(query)) {
+    const colList = realColumns?.length ? realColumns.slice(0, 6).join(', ') : 'specific columns';
     issues.push({
       id: 'select-star',
       severity: 'critical',
       title: 'SELECT * Detected',
       description: 'Using SELECT * scans all columns, significantly increasing data scanned and cost.',
-      suggestion: 'Replace SELECT * with only the specific columns you need.',
+      suggestion: `Replace SELECT * with only the columns you need, e.g.: ${colList}`,
     });
   }
 
@@ -154,13 +104,14 @@ export function analyzeQuery(query: string): AnalysisResult {
     });
   }
 
-  if (!hasPartitionFilter(query)) {
+  if (!hasPartitionFilter(query, partitionKeys)) {
+    const keyHint = partitionKeys?.length ? partitionKeys.join(', ') : 'year, month, date';
     issues.push({
       id: 'no-partition',
       severity: 'warning',
       title: 'No Partition Filter',
-      description: 'Queries without partition filters (year, month, date) scan all partitions.',
-      suggestion: 'Add partition key filters (e.g., year = 2024) to minimize data scanned.',
+      description: `Queries without partition filters (${keyHint}) scan all partitions.`,
+      suggestion: `Add partition key filters (e.g., ${partitionKeys?.[0] || 'year'} = 2024) to minimize data scanned.`,
     });
   }
 
@@ -204,51 +155,66 @@ export function analyzeQuery(query: string): AnalysisResult {
     });
   }
 
-  const originalDataGB = estimateBaseDataScan(query);
-  const optimizedQuery = generateOptimizedQuery(query, issues);
-  const optimizedDataGB = estimateBaseDataScan(optimizedQuery);
+  // Generate optimized query using real columns
+  const optimizedQuery = generateOptimizedQuery(query, issues, realColumns, partitionKeys);
 
   return {
     issues,
     optimizedQuery,
-    originalEstimate: estimateCost(originalDataGB),
-    optimizedEstimate: estimateCost(optimizedDataGB),
+    // These will be replaced by real Athena data when available
+    originalEstimate: { dataScannedGB: 0, costUSD: 0, estimatedTimeSeconds: 0 },
+    optimizedEstimate: { dataScannedGB: 0, costUSD: 0, estimatedTimeSeconds: 0 },
   };
+}
+
+function generateOptimizedQuery(
+  query: string,
+  issues: QueryIssue[],
+  realColumns?: string[],
+  partitionKeys?: string[]
+): string {
+  let optimized = query.trim();
+  const table = extractTableName(query);
+
+  if (issues.some(i => i.id === 'select-star') && realColumns?.length) {
+    const cols = realColumns.slice(0, 6).join(', ');
+    optimized = optimized.replace(/SELECT\s+\*/i, `SELECT ${cols}`);
+  }
+
+  if (issues.some(i => i.id === 'no-partition')) {
+    const partKey = partitionKeys?.[0] || 'year';
+    if (hasWhereClause(optimized)) {
+      optimized = optimized.replace(/WHERE\s+/i, `WHERE ${partKey} = 2024 AND `);
+    } else {
+      optimized = optimized.replace(
+        new RegExp(`(FROM\\s+${table.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'i'),
+        `$1 WHERE ${partKey} = 2024`
+      );
+    }
+  }
+
+  if (issues.some(i => i.id === 'no-limit') && !hasLimit(optimized)) {
+    optimized = optimized.replace(/;?\s*$/, ' LIMIT 1000;');
+  }
+
+  if (!optimized.endsWith(';')) optimized += ';';
+  return optimized;
 }
 
 export function highlightSQL(sql: string): string {
   let highlighted = sql.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-  // Highlight strings
   highlighted = highlighted.replace(/'([^']*)'/g, '<span class="sql-string">\'$1\'</span>');
-
-  // Highlight numbers
   highlighted = highlighted.replace(/\b(\d+)\b/g, '<span class="sql-number">$1</span>');
-
-  // Highlight keywords
   SQL_KEYWORDS.forEach(kw => {
     const regex = new RegExp(`\\b(${kw})\\b`, 'gi');
     highlighted = highlighted.replace(regex, '<span class="sql-keyword">$1</span>');
   });
-
   return highlighted;
 }
 
 export const SAMPLE_QUERIES = [
-  {
-    label: 'Full table scan',
-    query: "SELECT * FROM sales;",
-  },
-  {
-    label: 'Missing partition',
-    query: "SELECT * FROM sales WHERE product = 'phone';",
-  },
-  {
-    label: 'ORDER BY no LIMIT',
-    query: "SELECT name, total FROM orders ORDER BY total DESC;",
-  },
-  {
-    label: 'Reasonably optimized',
-    query: "SELECT product, price, quantity FROM sales WHERE year = 2024 AND region = 'US' LIMIT 100;",
-  },
+  { label: 'Full table scan', query: "SELECT * FROM sales;" },
+  { label: 'Missing partition', query: "SELECT * FROM sales WHERE product = 'phone';" },
+  { label: 'ORDER BY no LIMIT', query: "SELECT name, total FROM orders ORDER BY total DESC;" },
+  { label: 'Reasonably optimized', query: "SELECT product, price, quantity FROM sales WHERE year = 2024 AND region = 'US' LIMIT 100;" },
 ];
