@@ -42,7 +42,7 @@ export default function LiveQuery() {
   const { credentials } = useAuth();
   const [sql, setSql] = useState('');
   const [database, setDatabase] = useState('');
-  const [outputLocation, setOutputLocation] = useState('s3://athena-query-results-bucket/');
+  const [outputLocation, setOutputLocation] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [result, setResult] = useState<AthenaQueryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -54,6 +54,7 @@ export default function LiveQuery() {
   const [loadingDbs, setLoadingDbs] = useState(false);
   const [loadingTables, setLoadingTables] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [workgroups, setWorkgroups] = useState<AthenaWorkgroup[]>([]);
 
   const getCreds = useCallback(() => {
     if (!credentials) return null;
@@ -65,21 +66,34 @@ export default function LiveQuery() {
     };
   }, [credentials]);
 
-  // Fetch databases on mount
+  // Fetch databases and workgroups on mount
   useEffect(() => {
     const creds = getCreds();
     if (!creds) return;
+
     setLoadingDbs(true);
     setCatalogError(null);
     listDatabases(creds)
       .then((dbs) => {
         setDatabases(dbs);
-        if (dbs.length > 0 && !database) {
-          setDatabase(dbs[0].name);
-        }
+        if (dbs.length > 0 && !database) setDatabase(dbs[0].name);
       })
       .catch((e) => setCatalogError(e.message || 'Failed to list databases'))
       .finally(() => setLoadingDbs(false));
+
+    // Auto-detect S3 output location from Athena workgroups
+    listWorkgroups(
+      { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey, sessionToken: creds.sessionToken || '' },
+      creds.region
+    )
+      .then((wgs) => {
+        setWorkgroups(wgs);
+        const primary = wgs.find(w => w.name === 'primary') || wgs[0];
+        if (primary?.outputLocation && !outputLocation) {
+          setOutputLocation(primary.outputLocation);
+        }
+      })
+      .catch(() => {});
   }, [credentials]);
 
   // Fetch tables when database changes
