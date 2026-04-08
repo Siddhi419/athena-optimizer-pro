@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { executeAthenaQuery, AthenaQueryResult } from '@/lib/athenaClient';
+import { executeAthenaQuery, AthenaQueryResult, listWorkgroups, AthenaWorkgroup } from '@/lib/athenaClient';
 import { listDatabases, listTables, CatalogDatabase, CatalogTable } from '@/lib/glueCatalog';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
