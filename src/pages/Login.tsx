@@ -11,7 +11,7 @@ export default function Login() {
   const [accessKeyId, setAccessKeyId] = useState('');
   const [secretAccessKey, setSecretAccessKey] = useState('');
   const [sessionToken, setSessionToken] = useState('');
-  const [region, setRegion] = useState('us-east-1');
+  const [region, setRegion] = useState('ap-south-1');
   const [showSecret, setShowSecret] = useState(false);
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
