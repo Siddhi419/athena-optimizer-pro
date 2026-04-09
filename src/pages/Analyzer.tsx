@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { analyzeQuery, AnalysisResult, estimateCostFromBytes, SAMPLE_QUERIES } from '@/lib/queryAnalyzer';
-import { explainAthenaQuery, listWorkgroups, AthenaWorkgroup } from '@/lib/athenaClient';
-import { listDatabases, listTables, CatalogDatabase, CatalogTable } from '@/lib/glueCatalog';
+import { explainAthenaQuery } from '@/lib/athenaClient';
+import { fetchDatabases, fetchTables, fetchWorkgroups, CatalogDatabase, CatalogTable, AthenaWorkgroup } from '@/lib/awsMetadataClient';
 import SuggestionsPanel from '@/components/SuggestionsPanel';
 import ComparisonDashboard from '@/components/ComparisonDashboard';
 import { Textarea } from '@/components/ui/textarea';
@@ -58,7 +58,7 @@ export default function Analyzer() {
     // Fetch Glue databases
     setLoadingDbs(true);
     setCatalogError(null);
-    listDatabases(creds)
+    fetchDatabases(creds)
       .then((dbs) => {
         setDatabases(dbs);
         if (dbs.length > 0 && !database) setDatabase(dbs[0].name);
@@ -68,10 +68,7 @@ export default function Analyzer() {
 
     // Fetch Athena workgroups for S3 output location
     setLoadingWorkgroups(true);
-    listWorkgroups(
-      { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey, sessionToken: creds.sessionToken || '' },
-      creds.region
-    )
+    fetchWorkgroups(creds)
       .then((wgs) => {
         setWorkgroups(wgs);
         // Auto-set output location from the primary workgroup
@@ -90,7 +87,7 @@ export default function Analyzer() {
     if (!creds || !database) { setTables([]); return; }
     setLoadingTables(true);
     setSelectedTable('');
-    listTables(creds, database)
+    fetchTables(creds, database)
       .then(setTables)
       .catch(() => setTables([]))
       .finally(() => setLoadingTables(false));
@@ -170,8 +167,8 @@ export default function Analyzer() {
     if (!creds) return;
     setLoadingDbs(true);
     setCatalogError(null);
-    listDatabases(creds)
-      .then((dbs) => { setDatabases(dbs); toast.success(`Found ${dbs.length} database(s)`); })
+    fetchDatabases(creds)
+      .then((dbs) => { setDatabases(dbs); toast.success(`Found ${dbs.length} database(s) from your account`); })
       .catch((e) => setCatalogError(e.message))
       .finally(() => setLoadingDbs(false));
   };

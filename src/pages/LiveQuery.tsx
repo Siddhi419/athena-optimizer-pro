@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { executeAthenaQuery, AthenaQueryResult, listWorkgroups, AthenaWorkgroup } from '@/lib/athenaClient';
-import { listDatabases, listTables, CatalogDatabase, CatalogTable } from '@/lib/glueCatalog';
+import { executeAthenaQuery, AthenaQueryResult } from '@/lib/athenaClient';
+import { fetchDatabases, fetchTables, fetchWorkgroups, CatalogDatabase, CatalogTable, AthenaWorkgroup } from '@/lib/awsMetadataClient';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -73,7 +73,7 @@ export default function LiveQuery() {
 
     setLoadingDbs(true);
     setCatalogError(null);
-    listDatabases(creds)
+    fetchDatabases(creds)
       .then((dbs) => {
         setDatabases(dbs);
         if (dbs.length > 0 && !database) setDatabase(dbs[0].name);
@@ -82,10 +82,7 @@ export default function LiveQuery() {
       .finally(() => setLoadingDbs(false));
 
     // Auto-detect S3 output location from Athena workgroups
-    listWorkgroups(
-      { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey, sessionToken: creds.sessionToken || '' },
-      creds.region
-    )
+    fetchWorkgroups(creds)
       .then((wgs) => {
         setWorkgroups(wgs);
         const primary = wgs.find(w => w.name === 'primary') || wgs[0];
@@ -105,7 +102,7 @@ export default function LiveQuery() {
     }
     setLoadingTables(true);
     setSelectedTable('');
-    listTables(creds, database)
+    fetchTables(creds, database)
       .then(setTables)
       .catch(() => setTables([]))
       .finally(() => setLoadingTables(false));
@@ -147,7 +144,7 @@ export default function LiveQuery() {
     if (!creds) return;
     setLoadingDbs(true);
     setCatalogError(null);
-    listDatabases(creds)
+    fetchDatabases(creds)
       .then((dbs) => {
         setDatabases(dbs);
         toast.success(`Found ${dbs.length} database(s)`);
