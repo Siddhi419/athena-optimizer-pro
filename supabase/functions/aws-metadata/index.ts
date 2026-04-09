@@ -83,7 +83,8 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { accessKeyId, secretAccessKey, sessionToken, region, action } = await req.json();
+    const reqBody = await req.json();
+    const { accessKeyId, secretAccessKey, sessionToken, region, action, databaseName } = reqBody;
 
     if (!accessKeyId || !secretAccessKey || !region) {
       return new Response(JSON.stringify({ error: 'Missing credentials' }), {
@@ -112,7 +113,6 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'listTables') {
-      const { databaseName } = await req.clone().then(r => r.json());
       const tables: Array<{
         name: string; databaseName: string;
         columns: Array<{ name: string; type: string }>;
