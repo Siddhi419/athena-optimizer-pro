@@ -28,6 +28,23 @@ interface AwsCreds {
   region: string;
 }
 
+interface EdgeFunctionError {
+  message?: string;
+  context?: unknown;
+}
+
+function mapInvokeError(error: EdgeFunctionError) {
+  const details = [error.message, typeof error.context === 'string' ? error.context : '']
+    .filter(Boolean)
+    .join(' ');
+
+  if (/Failed to send a request to the Edge Function/i.test(details)) {
+    return new Error('Metadata service is unreachable. Republish the app and try again.');
+  }
+
+  return new Error(error.message || 'Edge function call failed');
+}
+
 async function callMetadata(creds: AwsCreds, action: string, extra: Record<string, string> = {}) {
   const { data, error } = await supabase.functions.invoke('aws-metadata', {
     body: {
@@ -39,9 +56,11 @@ async function callMetadata(creds: AwsCreds, action: string, extra: Record<strin
       ...extra,
     },
   });
-  if (error) throw new Error(error.message || 'Edge function call failed');
-  if (data?.error) throw new Error(data.error);
-  return data;
+
+  if (error) throw mapInvokeError(error as EdgeFunctionError);
+  if (data?.ok === false || data?.error) throw new Error(data.error || 'Metadata request failed');
+
+  return data?.data ?? data;
 }
 
 export async function fetchDatabases(creds: AwsCreds): Promise<CatalogDatabase[]> {

@@ -20,6 +20,7 @@ export default function HistoryPage() {
 
   const handleClear = () => {
     sessionStorage.removeItem('athena_results');
+    window.dispatchEvent(new Event('athena-query-activity-changed'));
     setEntries([]);
   };
 
