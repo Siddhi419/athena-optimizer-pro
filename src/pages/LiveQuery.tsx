@@ -2,7 +2,6 @@ import { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { executeAthenaQuery, AthenaQueryResult } from '@/lib/athenaClient';
 import { fetchDatabases, fetchTables, fetchWorkgroups, CatalogDatabase, CatalogTable, AthenaWorkgroup } from '@/lib/awsMetadataClient';
-import { recordLiveExecution } from '@/lib/queryActivity';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -128,15 +127,8 @@ export default function LiveQuery() {
         secretAccessKey: credentials.secretAccessKey,
         sessionToken: credentials.sessionToken || '',
       };
-      const queryResult = await executeAthenaQuery(
-        sql,
-        creds,
-        database || 'default',
-        outputLocation.trim() || undefined,
-        credentials.region
-      );
+      const queryResult = await executeAthenaQuery(sql, creds, database || 'default', outputLocation, credentials.region);
       setResult(queryResult);
-      recordLiveExecution(sql.trim(), database || 'default', queryResult);
       toast.success('Query executed successfully');
     } catch (e: any) {
       const msg = e.message || 'Query execution failed';

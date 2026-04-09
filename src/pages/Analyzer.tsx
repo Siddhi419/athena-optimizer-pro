@@ -3,7 +3,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { analyzeQuery, AnalysisResult, estimateCostFromBytes, SAMPLE_QUERIES } from '@/lib/queryAnalyzer';
 import { explainAthenaQuery } from '@/lib/athenaClient';
 import { fetchDatabases, fetchTables, fetchWorkgroups, CatalogDatabase, CatalogTable, AthenaWorkgroup } from '@/lib/awsMetadataClient';
-import { saveAnalysisEntry } from '@/lib/queryActivity';
 import SuggestionsPanel from '@/components/SuggestionsPanel';
 import ComparisonDashboard from '@/components/ComparisonDashboard';
 import { Textarea } from '@/components/ui/textarea';
@@ -108,12 +107,9 @@ export default function Analyzer() {
   const handleAnalyze = async () => {
     if (!query.trim()) return;
 
-    const trimmedQuery = query.trim();
-
     // Step 1: Static analysis with real metadata
-    const analysis = analyzeQuery(trimmedQuery, realColumns, partitionKeys);
-    let finalResult = analysis;
-    setResult(finalResult);
+    const analysis = analyzeQuery(query, realColumns, partitionKeys);
+    setResult(analysis);
 
     // Step 2: If we have credentials, run real EXPLAIN on Athena
     const creds = getCreds();
@@ -122,11 +118,8 @@ export default function Analyzer() {
       try {
         // Run EXPLAIN on original query
         const originalExplain = await explainAthenaQuery(
-          trimmedQuery,
-          { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey, sessionToken: creds.sessionToken || '' },
-          database || 'default',
-          outputLocation.trim() || undefined,
-          creds.region
+          query, { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey, sessionToken: creds.sessionToken || '' },
+          database || 'default', outputLocation, creds.region
         );
 
         const originalEstimate = estimateCostFromBytes(originalExplain.dataScannedBytes);
@@ -134,14 +127,12 @@ export default function Analyzer() {
 
         // Run EXPLAIN on optimized query
         let optimizedEstimate = originalEstimate;
-        if (analysis.optimizedQuery && analysis.optimizedQuery !== trimmedQuery && analysis.optimizedQuery !== trimmedQuery + ';') {
+        if (analysis.optimizedQuery && analysis.optimizedQuery !== query.trim() && analysis.optimizedQuery !== query.trim() + ';') {
           try {
             const optimizedExplain = await explainAthenaQuery(
               analysis.optimizedQuery,
               { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey, sessionToken: creds.sessionToken || '' },
-              database || 'default',
-              outputLocation.trim() || undefined,
-              creds.region
+              database || 'default', outputLocation, creds.region
             );
             optimizedEstimate = estimateCostFromBytes(optimizedExplain.dataScannedBytes);
             optimizedEstimate.estimatedTimeSeconds = Math.round(optimizedExplain.executionTimeMs / 100) / 10;
@@ -155,8 +146,7 @@ export default function Analyzer() {
           }
         }
 
-        finalResult = { ...analysis, originalEstimate, optimizedEstimate };
-        setResult(finalResult);
+        setResult(prev => prev ? { ...prev, originalEstimate, optimizedEstimate } : prev);
         toast.success('Real-time analysis complete via Athena EXPLAIN');
       } catch (e: any) {
         toast.error(`Athena EXPLAIN failed: ${e.message}. Showing static analysis.`);
@@ -166,12 +156,10 @@ export default function Analyzer() {
     }
 
     // Store in sessionStorage for Results page
-    saveAnalysisEntry({
-      id: crypto.randomUUID(),
-      query: trimmedQuery,
-      result: finalResult,
-      timestamp: new Date().toISOString(),
-    });
+    const stored = JSON.parse(sessionStorage.getItem('athena_results') || '[]');
+    const entry = { id: crypto.randomUUID(), query: query.trim(), result: analysis, timestamp: new Date().toISOString() };
+    sessionStorage.setItem('athena_results', JSON.stringify([entry, ...stored].slice(0, 50)));
+    sessionStorage.setItem('athena_latest', JSON.stringify(entry));
   };
 
   const refreshCatalog = () => {

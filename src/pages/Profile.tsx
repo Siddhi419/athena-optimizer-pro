@@ -1,30 +1,13 @@
-import { useEffect, useState } from 'react';
-import { User, Shield, Activity, LogOut, Cloud, Key, Globe, Hash, Loader2, TimerReset, TrendingDown } from 'lucide-react';
+import { User, Shield, Activity, LogOut, Cloud, Key, Globe, Hash, Loader2 } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { getProfileStats, QUERY_ACTIVITY_EVENT } from '@/lib/queryActivity';
-
-function formatDuration(ms: number) {
-  if (ms <= 0) return '0ms';
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  return `${(ms / 1000).toFixed(ms >= 10000 ? 0 : 1)}s`;
-}
 
 export default function Profile() {
   const { user, logout, awsIdentity, awsIdentityLoading, credentials } = useAuth();
   const navigate = useNavigate();
-  const [profileStats, setProfileStats] = useState(() => getProfileStats());
-
-  useEffect(() => {
-    const update = () => setProfileStats(getProfileStats());
-
-    update();
-    window.addEventListener(QUERY_ACTIVITY_EVENT, update);
-    return () => window.removeEventListener(QUERY_ACTIVITY_EVENT, update);
-  }, []);
 
   const handleLogout = () => {
     logout();
@@ -114,27 +97,13 @@ export default function Profile() {
       </div>
 
       {/* Details */}
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2">
         <div className="rounded-xl border border-border bg-card p-5">
           <div className="flex items-center gap-2 text-muted-foreground">
             <Activity className="h-4 w-4" />
             <span className="text-xs font-medium">Queries Today</span>
           </div>
-          <p className="mt-2 text-2xl font-bold text-foreground">{profileStats.queriesToday}</p>
-        </div>
-        <div className="rounded-xl border border-border bg-card p-5">
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <TimerReset className="h-4 w-4" />
-            <span className="text-xs font-medium">Avg Execution Time</span>
-          </div>
-          <p className="mt-2 text-2xl font-bold text-foreground">{formatDuration(profileStats.avgExecutionTimeMs)}</p>
-        </div>
-        <div className="rounded-xl border border-border bg-card p-5">
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <TrendingDown className="h-4 w-4" />
-            <span className="text-xs font-medium">Avg Efficiency Gain</span>
-          </div>
-          <p className="mt-2 text-2xl font-bold text-foreground">{Math.round(profileStats.avgEfficiencyPercent)}%</p>
+          <p className="mt-2 text-2xl font-bold text-foreground">0</p>
         </div>
         <div className="rounded-xl border border-border bg-card p-5">
           <div className="flex items-center gap-2 text-muted-foreground">

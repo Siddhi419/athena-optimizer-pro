@@ -1,4 +1,12 @@
-import { supabase } from '@/integrations/supabase/client';
+import {
+  AthenaClient,
+  StartQueryExecutionCommand,
+  GetQueryExecutionCommand,
+  GetQueryResultsCommand,
+  QueryExecutionState,
+  ListWorkGroupsCommand,
+  GetWorkGroupCommand,
+} from '@aws-sdk/client-athena';
 
 export interface AthenaQueryResult {
   columns: string[];
@@ -15,57 +23,75 @@ interface TempCredentials {
   sessionToken: string;
 }
 
-interface EdgeFunctionError {
-  message?: string;
-  context?: unknown;
-}
-
-function mapInvokeError(error: EdgeFunctionError) {
-  const details = [error.message, typeof error.context === 'string' ? error.context : '']
-    .filter(Boolean)
-    .join(' ');
-
-  if (/Failed to send a request to the Edge Function/i.test(details)) {
-    return new Error('Athena service is unreachable. Republish the app and try again.');
-  }
-
-  return new Error(error.message || 'Athena request failed');
-}
-
-async function callAthenaAction<T>(
-  action: string,
-  creds: TempCredentials,
-  payload: Record<string, unknown>
-): Promise<T> {
-  const { data, error } = await supabase.functions.invoke('aws-metadata', {
-    body: {
+function createAthenaClient(creds: TempCredentials, region: string): AthenaClient {
+  return new AthenaClient({
+    region,
+    credentials: {
       accessKeyId: creds.accessKeyId,
       secretAccessKey: creds.secretAccessKey,
-      sessionToken: creds.sessionToken,
-      action,
-      ...payload,
+      ...(creds.sessionToken ? { sessionToken: creds.sessionToken } : {}),
     },
   });
+}
 
-  if (error) throw mapInvokeError(error as EdgeFunctionError);
-  if (data?.ok === false || data?.error) throw new Error(data.error || 'Athena request failed');
+async function waitForQuery(
+  client: AthenaClient,
+  queryExecutionId: string
+): Promise<{ state: string; executionTimeMs: number; dataScannedBytes: number }> {
+  let state: QueryExecutionState | string = 'QUEUED';
+  let executionTimeMs = 0;
+  let dataScannedBytes = 0;
 
-  return (data?.data ?? data) as T;
+  while (state === 'QUEUED' || state === 'RUNNING') {
+    await new Promise((r) => setTimeout(r, 1000));
+    const statusResult = await client.send(
+      new GetQueryExecutionCommand({ QueryExecutionId: queryExecutionId })
+    );
+    const execution = statusResult.QueryExecution;
+    state = execution?.Status?.State || 'UNKNOWN';
+    if (state === 'FAILED') throw new Error(execution?.Status?.StateChangeReason || 'Query execution failed');
+    if (state === 'CANCELLED') throw new Error('Query was cancelled');
+    if (execution?.Statistics) {
+      executionTimeMs = execution.Statistics.EngineExecutionTimeInMillis || 0;
+      dataScannedBytes = execution.Statistics.DataScannedInBytes || 0;
+    }
+  }
+
+  return { state, executionTimeMs, dataScannedBytes };
 }
 
 export async function executeAthenaQuery(
   sql: string,
   creds: TempCredentials,
   database: string = 'default',
-  outputLocation?: string,
+  outputLocation: string = 's3://athena-query-results-bucket/',
   region: string = 'us-east-1'
 ): Promise<AthenaQueryResult> {
-  return callAthenaAction<AthenaQueryResult>('executeQuery', creds, {
-    sql,
-    database,
-    region,
-    outputLocation: outputLocation?.trim() || undefined,
-  });
+  const client = createAthenaClient(creds, region);
+
+  const startResult = await client.send(
+    new StartQueryExecutionCommand({
+      QueryString: sql,
+      QueryExecutionContext: { Database: database },
+      ResultConfiguration: { OutputLocation: outputLocation },
+    })
+  );
+
+  const queryExecutionId = startResult.QueryExecutionId;
+  if (!queryExecutionId) throw new Error('Failed to start query execution');
+
+  const { state, executionTimeMs, dataScannedBytes } = await waitForQuery(client, queryExecutionId);
+
+  const resultsResponse = await client.send(
+    new GetQueryResultsCommand({ QueryExecutionId: queryExecutionId })
+  );
+
+  const resultSet = resultsResponse.ResultSet;
+  const columns = resultSet?.ResultSetMetadata?.ColumnInfo?.map((c) => c.Name || '') || [];
+  const allRows = resultSet?.Rows || [];
+  const rows = allRows.slice(1).map((row) => row.Data?.map((d) => d.VarCharValue || '') || []);
+
+  return { columns, rows, queryExecutionId, state, dataScannedBytes, executionTimeMs };
 }
 
 export interface ExplainResult {
@@ -79,15 +105,40 @@ export async function explainAthenaQuery(
   sql: string,
   creds: TempCredentials,
   database: string = 'default',
-  outputLocation?: string,
+  outputLocation: string = 's3://athena-query-results-bucket/',
   region: string = 'us-east-1'
 ): Promise<ExplainResult> {
-  return callAthenaAction<ExplainResult>('explainQuery', creds, {
-    sql,
-    database,
-    region,
-    outputLocation: outputLocation?.trim() || undefined,
-  });
+  const client = createAthenaClient(creds, region);
+
+  for (const prefix of ['EXPLAIN ANALYZE', 'EXPLAIN']) {
+    try {
+      const startResult = await client.send(
+        new StartQueryExecutionCommand({
+          QueryString: `${prefix} ${sql}`,
+          QueryExecutionContext: { Database: database },
+          ResultConfiguration: { OutputLocation: outputLocation },
+        })
+      );
+
+      const queryExecutionId = startResult.QueryExecutionId;
+      if (!queryExecutionId) continue;
+
+      const { executionTimeMs, dataScannedBytes } = await waitForQuery(client, queryExecutionId);
+
+      const resultsResponse = await client.send(
+        new GetQueryResultsCommand({ QueryExecutionId: queryExecutionId })
+      );
+
+      const allRows = resultsResponse.ResultSet?.Rows || [];
+      const queryPlan = allRows.map(r => r.Data?.map(d => d.VarCharValue || '').join(' ') || '').join('\n');
+
+      return { dataScannedBytes, executionTimeMs, queryPlan };
+    } catch {
+      if (prefix === 'EXPLAIN') throw new Error('EXPLAIN query failed');
+    }
+  }
+
+  throw new Error('Failed to explain query');
 }
 
 /** Workgroup info with S3 output location */
@@ -102,5 +153,30 @@ export async function listWorkgroups(
   creds: TempCredentials,
   region: string
 ): Promise<AthenaWorkgroup[]> {
-  return callAthenaAction<AthenaWorkgroup[]>('listWorkgroups', creds, { region });
+  const client = createAthenaClient(creds, region);
+  const workgroups: AthenaWorkgroup[] = [];
+  let nextToken: string | undefined;
+
+  do {
+    const res = await client.send(new ListWorkGroupsCommand({ NextToken: nextToken }));
+    for (const wg of res.WorkGroups || []) {
+      workgroups.push({
+        name: wg.Name || '',
+        state: wg.State,
+      });
+    }
+    nextToken = res.NextToken;
+  } while (nextToken);
+
+  // Fetch output location for each workgroup
+  for (const wg of workgroups) {
+    try {
+      const detail = await client.send(new GetWorkGroupCommand({ WorkGroup: wg.name }));
+      wg.outputLocation = detail.WorkGroup?.Configuration?.ResultConfiguration?.OutputLocation;
+    } catch {
+      // Skip if we can't read workgroup details
+    }
+  }
+
+  return workgroups;
 }

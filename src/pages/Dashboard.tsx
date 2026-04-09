@@ -1,20 +1,12 @@
-import { useEffect, useState } from 'react';
 import { Database, Search, BarChart3, History, TrendingDown, Zap, DollarSign, Clock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getDashboardStats, QUERY_ACTIVITY_EVENT } from '@/lib/queryActivity';
 
-function formatCurrency(value: number) {
-  return `$${value.toFixed(2)}`;
-}
-
-function formatPercent(value: number) {
-  return `${Math.round(value)}%`;
-}
-
-function formatSeconds(value: number) {
-  if (value < 1) return `${Math.round(value * 1000)}ms`;
-  return `${value.toFixed(value >= 10 ? 0 : 1)}s`;
-}
+const stats = [
+  { label: 'Queries Analyzed', value: '0', icon: Search, color: 'text-primary' },
+  { label: 'Total Savings', value: '$0.00', icon: DollarSign, color: 'text-success' },
+  { label: 'Avg. Reduction', value: '0%', icon: TrendingDown, color: 'text-info' },
+  { label: 'Avg. Time Saved', value: '0s', icon: Clock, color: 'text-warning' },
+];
 
 const quickActions = [
   { title: 'Analyze a Query', description: 'Paste SQL and get instant optimization suggestions', icon: Search, route: '/analyzer' },
@@ -24,22 +16,6 @@ const quickActions = [
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const [stats, setStats] = useState(() => getDashboardStats());
-
-  useEffect(() => {
-    const update = () => setStats(getDashboardStats());
-
-    update();
-    window.addEventListener(QUERY_ACTIVITY_EVENT, update);
-    return () => window.removeEventListener(QUERY_ACTIVITY_EVENT, update);
-  }, []);
-
-  const statCards = [
-    { label: 'Queries Analyzed', value: String(stats.queriesAnalyzed), icon: Search, color: 'text-primary' },
-    { label: 'Total Savings', value: formatCurrency(stats.totalSavingsUsd), icon: DollarSign, color: 'text-success' },
-    { label: 'Avg. Reduction', value: formatPercent(stats.avgReductionPercent), icon: TrendingDown, color: 'text-info' },
-    { label: 'Avg. Time Saved', value: formatSeconds(stats.avgTimeSavedSeconds), icon: Clock, color: 'text-warning' },
-  ];
 
   return (
     <div className="space-y-8 p-6">
@@ -51,7 +27,7 @@ export default function Dashboard() {
 
       {/* Stats */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {statCards.map((s) => {
+        {stats.map((s) => {
           const Icon = s.icon;
           return (
             <div key={s.label} className="rounded-xl border border-border bg-card p-5">
