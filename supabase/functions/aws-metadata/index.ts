@@ -144,6 +144,68 @@ Deno.serve(async (req) => {
       });
     }
 
+    if (action === 'explainQuery') {
+      const { sql, database, outputLocation } = reqBody;
+      if (!sql) {
+        return new Response(JSON.stringify({ ok: false, error: 'Missing sql parameter' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      const db = database || 'default';
+      const output = outputLocation || 's3://athena-query-results-bucket/';
+
+      for (const prefix of ['EXPLAIN ANALYZE', 'EXPLAIN']) {
+        try {
+          // Start query
+          const startRes = await awsRequest(creds, 'athena', 'AmazonAthena.StartQueryExecution', {
+            QueryString: `${prefix} ${sql}`,
+            QueryExecutionContext: { Database: db },
+            ResultConfiguration: { OutputLocation: output },
+          });
+          const qid = startRes.QueryExecutionId;
+          if (!qid) continue;
+
+          // Poll for completion
+          let state = 'QUEUED';
+          let dataScannedBytes = 0;
+          let executionTimeMs = 0;
+          while (state === 'QUEUED' || state === 'RUNNING') {
+            await new Promise(r => setTimeout(r, 1500));
+            const statusRes = await awsRequest(creds, 'athena', 'AmazonAthena.GetQueryExecution', { QueryExecutionId: qid });
+            const exec = statusRes.QueryExecution;
+            state = exec?.Status?.State || 'UNKNOWN';
+            if (state === 'FAILED') throw new Error(exec?.Status?.StateChangeReason || 'Query failed');
+            if (state === 'CANCELLED') throw new Error('Query cancelled');
+            if (exec?.Statistics) {
+              executionTimeMs = exec.Statistics.EngineExecutionTimeInMillis || 0;
+              dataScannedBytes = exec.Statistics.DataScannedInBytes || 0;
+            }
+          }
+
+          // Get results
+          const resultsRes = await awsRequest(creds, 'athena', 'AmazonAthena.GetQueryResults', { QueryExecutionId: qid });
+          const rows = resultsRes.ResultSet?.Rows || [];
+          const queryPlan = rows.map((r: any) => (r.Data || []).map((d: any) => d.VarCharValue || '').join(' ')).join('\n');
+
+          return new Response(JSON.stringify({ ok: true, data: { dataScannedBytes, executionTimeMs, queryPlan } }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        } catch (e: any) {
+          if (prefix === 'EXPLAIN') {
+            return new Response(JSON.stringify({ ok: false, error: e.message || 'EXPLAIN failed' }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+          // If EXPLAIN ANALYZE fails, fall through to plain EXPLAIN
+        }
+      }
+
+      return new Response(JSON.stringify({ ok: false, error: 'Failed to explain query' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     if (action === 'listWorkgroups') {
       const workgroups: Array<{ name: string; outputLocation?: string; state?: string }> = [];
       let nextToken: string | undefined;
