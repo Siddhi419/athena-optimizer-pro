@@ -7,6 +7,7 @@ import {
   ListWorkGroupsCommand,
   GetWorkGroupCommand,
 } from '@aws-sdk/client-athena';
+import { supabase } from '@/integrations/supabase/client';
 
 export interface AthenaQueryResult {
   columns: string[];
@@ -100,7 +101,7 @@ export interface ExplainResult {
   queryPlan: string;
 }
 
-/** Run EXPLAIN on a query to get real Athena cost stats */
+/** Run EXPLAIN on a query via edge function to bypass CORS */
 export async function explainAthenaQuery(
   sql: string,
   creds: TempCredentials,
@@ -108,37 +109,23 @@ export async function explainAthenaQuery(
   outputLocation: string = 's3://athena-query-results-bucket/',
   region: string = 'us-east-1'
 ): Promise<ExplainResult> {
-  const client = createAthenaClient(creds, region);
+  const { data, error } = await supabase.functions.invoke('aws-metadata', {
+    body: {
+      accessKeyId: creds.accessKeyId,
+      secretAccessKey: creds.secretAccessKey,
+      sessionToken: creds.sessionToken || undefined,
+      region,
+      action: 'explainQuery',
+      sql,
+      database,
+      outputLocation,
+    },
+  });
 
-  for (const prefix of ['EXPLAIN ANALYZE', 'EXPLAIN']) {
-    try {
-      const startResult = await client.send(
-        new StartQueryExecutionCommand({
-          QueryString: `${prefix} ${sql}`,
-          QueryExecutionContext: { Database: database },
-          ResultConfiguration: { OutputLocation: outputLocation },
-        })
-      );
+  if (error) throw new Error(error.message || 'Edge function call failed');
+  if (!data?.ok) throw new Error(data?.error || 'EXPLAIN query failed');
 
-      const queryExecutionId = startResult.QueryExecutionId;
-      if (!queryExecutionId) continue;
-
-      const { executionTimeMs, dataScannedBytes } = await waitForQuery(client, queryExecutionId);
-
-      const resultsResponse = await client.send(
-        new GetQueryResultsCommand({ QueryExecutionId: queryExecutionId })
-      );
-
-      const allRows = resultsResponse.ResultSet?.Rows || [];
-      const queryPlan = allRows.map(r => r.Data?.map(d => d.VarCharValue || '').join(' ') || '').join('\n');
-
-      return { dataScannedBytes, executionTimeMs, queryPlan };
-    } catch {
-      if (prefix === 'EXPLAIN') throw new Error('EXPLAIN query failed');
-    }
-  }
-
-  throw new Error('Failed to explain query');
+  return data.data;
 }
 
 /** Workgroup info with S3 output location */
